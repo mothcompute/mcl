@@ -1,0 +1,48 @@
+# im not multimc who cares if you dont rename this
+PNAME=mcl
+CACHE=/tmp/$PNAME\cache
+
+mkdir -p $CACHE sh node libs assets assets/indexes assets/objects minecraft
+echo fetching version manifest...
+wget https://launchermeta.mojang.com/mc/game/version_manifest.json -qO $CACHE/version_manifest.json
+
+
+# release|snapshot
+CHANNEL=release
+VERSION="$(jq -r .latest.$CHANNEL $CACHE/version_manifest.json)"
+
+# ex. 1.17.1
+#VERSION=
+
+echo ver $VERSION
+
+# create directory structure for version if missing
+mkdir -p minecraft minecraft/versions minecraft/versions/$VERSION
+
+# get json file for version
+VERSION_MANIFEST=$(jq ".versions[] | select(.id==\"$VERSION\")" $CACHE/version_manifest.json | jq -r .url)
+[ ! -f "minecraft/versions/$VERSION/$(basename $VERSION_MANIFEST)" ] && wget $VERSION_MANIFEST -qO "minecraft/versions/$VERSION/$(basename $VERSION_MANIFEST)"
+
+# get jar file for version
+[ ! -f "minecraft/versions/$VERSION/$VERSION.jar" ] && wget "$(jq -r .downloads.client.url minecraft/versions/$VERSION/$VERSION.json)" -qO "minecraft/versions/$VERSION/$VERSION.jar"
+
+# get version assets
+VERSION_ASSETS="$(jq -r .assetIndex.url minecraft/versions/$VERSION/$VERSION.json)"
+[ ! -f "assets/indexes/$(basename $VERSION_ASSETS)" ] && wget $VERSION_ASSETS -qO "assets/indexes/$(basename $VERSION_ASSETS)"
+
+# download objects
+for OBJ in `jq -r .objects[].hash "assets/indexes/$(basename $VERSION_ASSETS)"`; do
+	mkdir -p "assets/objects/$(echo $OBJ | cut -b 1,2)"
+	[ ! -f "assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ" ] && wget "http://resources.download.minecraft.net/$(echo $OBJ | cut -b 1,2)/$OBJ" -qO "assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ" &
+done
+
+# get non-native libs
+for LIBINDEX in `seq 0 $(($(jq '.libraries|length' minecraft/versions/$VERSION/$VERSION.json)-1))`; do
+	LIBPATH=libs/`jq -r ".libraries[$LIBINDEX].downloads.artifact.path" minecraft/versions/$VERSION/$VERSION.json`
+	LIBURL=`jq -r ".libraries[$LIBINDEX].downloads.artifact.url" minecraft/versions/$VERSION/$VERSION.json`
+	mkdir -p "$(dirname $LIBPATH)"
+	[ ! -f "$LIBPATH" ] && echo $LIBURL '=>' "$LIBPATH" && wget $LIBURL -qO "$LIBPATH"
+done
+
+# all the libs in the classpath, minus the version jar
+# find /home/NAME/.minecraft/libraries/ | grep jar | sed 's/^\/home\/NAME\/.minecraft\/libraries\///g' | grep -v natives | wc -l
