@@ -1,0 +1,13 @@
+#!/bin/zsh
+echo '<style>body{color:white;background:black}</style><pre>'
+ACODE=$2
+SECRET=$1
+JSON=(-H 'Content-Type: application/json' -H 'Accept: application/json')
+curl -s https://login.microsoftonline.com/consumers/oauth2/v2.0/token -H 'Content-Type: application/x-www-form-urlencoded' -d "client_id=ed8c593c-4c7f-4484-8dc4-d2ce60bf62a4&scope=XboxLive.signin&code=$ACODE&redirect_uri=https%3A%2F%2Fmothcompute.lilylenora.net%2Fmcl_auth.php&grant_type=authorization_code&client_secret=$SECRET"|jq -r '.expires_in,.access_token'|xargs|read AUEXPIRES TOKEN
+curl -s https://user.auth.xboxlive.com/user/authenticate $JSON -d "{\"Properties\":{\"AuthMethod\":\"RPS\",\"SiteName\":\"user.auth.xboxlive.com\",\"RpsTicket\":\"d=$(bin/penc $TOKEN)\"},\"RelyingParty\":\"http://auth.xboxlive.com\",\"TokenType\":\"JWT\"}"|jq -r '.NotAfter,.Token,.DisplayClaims.xui[0].uhs'|xargs|read XBEXPIRES XBTOKEN USERHASH
+curl -s https://xsts.auth.xboxlive.com/xsts/authorize $JSON -d '{"Properties":{"SandboxId":"RETAIL","UserTokens":['"\"$XBTOKEN\""']},"RelyingParty":"rp://api.minecraftservices.com/","TokenType":"JWT"}'|jq -r '.NotAfter,.Token'|xargs|read XSEXPIRES XSTOKEN
+curl -s https://api.minecraftservices.com/authentication/login_with_xbox $JSON -d "{\"identityToken\":\"XBL3.0 x=$USERHASH;$XSTOKEN>\"}"|jq -r '.access_token,.expires_in'|xargs|read MCTOKEN MCEXPIRES
+bin/spjwt "$(curl -s https://api.minecraftservices.com/entitlements/mcstore -H "Authorization: Bearer $MCTOKEN"|jq -r 'select(.items[].name == "game_minecraft").signature')"|jq -r '.payload.signerId'|read XUID
+[ -z "$XUID" ]&&echo 'you do not own the game...'&&exit
+curl -s https://api.minecraftservices.com/minecraft/profile -H "Authorization: Bearer $MCTOKEN"|jq -r '.id,.name'|xargs|read MCID MCNAME
+echo "{\"xb_uid\":\"$XUID\",\"xb_usr\":\"$USERHASH\",\"mc_usr\":\"$MCNAME\",\"mc_uid\":\"$MCID\",\"exp\":{\"xb\":\"$XBEXPIRES\",\"mc\":\"$(date -d "+$MCEXPIRES seconds" +'%Y-%m-%dT%H:%M:%S.0000000Z')\"},\"tok\":{\"xb\":\"$XBTOKEN\",\"mc\":\"$MCTOKEN\"}}"

@@ -1,0 +1,12 @@
+#!/bin/zsh
+echo '<pre>'
+XBTOKEN=$1
+USERHASH=$2
+XBEXPIRES=$3
+JSON=(-H 'Content-Type: application/json' -H 'Accept: application/json')
+curl -s https://xsts.auth.xboxlive.com/xsts/authorize $JSON -d '{"Properties":{"SandboxId":"RETAIL","UserTokens":['"\"$XBTOKEN\""']},"RelyingParty":"rp://api.minecraftservices.com/","TokenType":"JWT"}'|jq -r '.NotAfter,.Token'|xargs|read XSEXPIRES XSTOKEN
+curl -s https://api.minecraftservices.com/authentication/login_with_xbox $JSON -d "{\"identityToken\":\"XBL3.0 x=$USERHASH;$XSTOKEN>\"}"|jq -r '.access_token,.expires_in'|xargs|read MCTOKEN MCEXPIRES
+bin/spjwt "$(curl -s https://api.minecraftservices.com/entitlements/mcstore -H "Authorization: Bearer $MCTOKEN"|jq -r 'select(.items[].name == "game_minecraft").signature')"|jq -r '.payload.signerId'|read XUID
+[ -z "$XUID" ]&&echo 'you do not own the game...'&&exit
+curl -s https://api.minecraftservices.com/minecraft/profile -H "Authorization: Bearer $MCTOKEN"|jq -r '.id,.name'|xargs|read MCID MCNAME
+echo "{\"xb_uid\":\"$XUID\",\"mc_usr\":\"$MCNAME\",\"mc_uid\":\"$MCID\",\"exp\":{\"xb\":\"$XBEXPIRES\",\"mc\":\"$(date -d "+$MCEXPIRES seconds" +'%Y-%m-%dT%H:%M:%S.0000000Z')\"},\"tok\":{\"xb\":\"$XBTOKEN\",\"mc\":\"$MCTOKEN\"}}"

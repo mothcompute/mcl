@@ -1,31 +1,30 @@
 # mcl
 
-Minecraft launcher created out of dissatisfaction with other clients
+minecraft launcher for linux and maybe macos
 
-## What's it do?
+## what does it do
 
 - download many versions
 - download assets
 - download libraries
-
-## What's it *not* do?
-
+- set up natives
 - select the correct libraries for the version
-- set up natives (will only support linux)
-- get an authentication token (I will not support Mojang accounts)
+- get an authentication token (microsoft auth only)
 - instances
-- ...launch the game :/
+- launch the game
 
-## Why not use the regular launcher?
+## what does it *not* do
+
+- optifine, forge, etc
+- support external natives (openbsd, freebsd, etc)
+- windows support. i will not be adding this
+
+## why not use the regular launcher
 
 - closed source
-- really buggy, for some reason
-- I'd call it bloated but honestly this is probably slower
+- really buggy for some reason
+- i would call it bloated but honestly this is probably slower
 
-## Why not a third party launcher?
+## why not a third party launcher
 
-GDLauncher sounds great but it crashes for me and MultiMC's management sucks; they're terrible about custom builds and branding. I don't know of any other launchers and quite frankly I think I should just torture myself by making one.
-
-## I want to steal your code.
-
-I'm honored, I guess? The code is public domain. There's no license file, so just put in your own and pretend I put it there.
+theyre all too complex and weird and have Discourse

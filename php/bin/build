@@ -1,0 +1,6 @@
+[ "$1" = 'clean' ] && rm -rf obj spjwt penc && exit
+
+mkdir -p obj
+nasm -felf64 src/bswap.s -o obj/bswap.o
+cc src/penc.c -o penc
+cc src/spjwt.c obj/bswap.o -o spjwt

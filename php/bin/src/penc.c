@@ -1,0 +1,1 @@
+int main(int a,char**v){if(a<2)exit(1);int i=0,c;if((a>2)&&!(i=(*((short*)v[1])==28717)))exit(1);while(c=*(v[1+i]++)){if(i&&c==32){c=43;goto p;}if((!((c^32)>>4)&&c!=34&&c!=45&&c!=46)||(c==58||c==59||c==61||c==63||c==64||c==91||c==93))printf("%%%02X",c);else p:putchar(c);}putchar(10);}

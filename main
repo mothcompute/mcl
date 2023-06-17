@@ -1,48 +1,158 @@
+# assume EDITOR is set
+BROWSER=firefox
+
 # im not multimc who cares if you dont rename this
 PNAME=mcl
+MDIR=~/.$PNAME
 CACHE=/tmp/$PNAME\cache
+PLAT=linux
 
-mkdir -p $CACHE sh node libs assets assets/indexes assets/objects minecraft
+login() {
+	$1 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=ed8c593c-4c7f-4484-8dc4-d2ce60bf62a4&response_type=code&response_mode=query&scope=XboxLive.signin&redirect_uri=https%3A%2F%2Fmothcompute.lilylenora.net%2Fmcl_auth.php'
+	echo -n 'opened sign-in link in firefox. paste the output into the file that is about to be opened (press enter to continue):'
+	read
+	$EDITOR "$MDIR/account$2"
+}
+
+[ "$1" = edit ] && $EDITOR "$MDIR/profile/$2" && exit
+
+[ ! -f "$MDIR/account$2" -o "$1" = 'login' ] && login "$BROWSER" "$2" && echo logged in && exit
+
+[ $(date -d "$(jq -r .exp.mc "$MDIR/account$2")" +%s) -le $(date +%s) ] && if [ $(date -d "$(jq -r .exp.xb "$MDIR/account$2")" +%s) -le $(date +%s) ]; then
+	login "$BROWSER" "$2"
+	else
+		curl 'https://mothcompute.lilylenora.net/mcl_auth.php?xb='$(jq -r .tok.xb "$MDIR/account$2")'&u='$(jq -r .xb_usr "$MDIR/account$2")'&e='$(jq -r .exp.xb "$MDIR/account$2") > "$MDIR/swp.account$2"
+		mv "$MDIR/swp.account$2" "$MDIR/account$2"
+fi
+
+user_type=msa
+auth_xuid=$(jq -r '.xb_uid' "$MDIR/account$2")
+auth_player_name=$(jq -r '.mc_usr' "$MDIR/account$2")
+auth_uuid=$(jq -r '.mc_uid' "$MDIR/account$2")
+auth_access_token=$(jq -r '.tok.mc' "$MDIR/account$2")
+auth_session="token:$auth_access_token:$auth_uuid"
+clientid=$(dd if=/dev/random bs=48 count=1 status=none|base64)
+
+mkdir -p "$CACHE" "$MDIR/libs" "$MDIR/assets" "$MDIR/assets/indexes" "$MDIR/assets/objects" "$MDIR/minecraft" "$CACHE/natives" "$MDIR/profile"
+
+[ ! -z "$1" -a ! -f "$MDIR/profile/$1" ] && echo -ne "# type 'snapshot', 'release', or a version number. get a list with:\n# curl https://launchermeta.mojang.com/mc/game/version_manifest.json | jq -r '.versions[].id' | less\nVERSION=snapshot\nJAVA8=/usr/lib/jvm/java-8-openjdk/bin/java\nJAVA_LATEST=/bin/java\ngame_directory=~/mclinstance\n# additional jvm arguments\njvm="> "$MDIR/profile/$1" && $EDITOR "$MDIR/profile/$1"
+
 echo fetching version manifest...
 wget https://launchermeta.mojang.com/mc/game/version_manifest.json -qO $CACHE/version_manifest.json
 
-
-# release|snapshot
-CHANNEL=release
+CHANNEL=snapshot
+JAVA8=/usr/lib/jvm/java-8-openjdk/bin/java
+JAVA_LATEST=/bin/java
+game_directory=~/mclinstance
 VERSION="$(jq -r .latest.$CHANNEL $CACHE/version_manifest.json)"
+jvm=""
+VIRTP=""
 
-# ex. 1.17.1
-#VERSION=
+[ ! -z "$1" ] && . "$MDIR/profile/$1"
+mkdir -p "$game_directory"
+
+[ "$VERSION" = 'snapshot' -o "$VERSION" = 'release' ] && CHANNEL=$VERSION && VERSION="$(jq -r .latest.$CHANNEL $CACHE/version_manifest.json)"
 
 echo ver $VERSION
 
 # create directory structure for version if missing
-mkdir -p minecraft minecraft/versions minecraft/versions/$VERSION
+mkdir -p $MDIR/minecraft/versions/$VERSION
 
 # get json file for version
 VERSION_MANIFEST=$(jq ".versions[] | select(.id==\"$VERSION\")" $CACHE/version_manifest.json | jq -r .url)
-[ ! -f "minecraft/versions/$VERSION/$(basename $VERSION_MANIFEST)" ] && wget $VERSION_MANIFEST -qO "minecraft/versions/$VERSION/$(basename $VERSION_MANIFEST)"
+[ ! -f "$MDIR/minecraft/versions/$VERSION/$(basename $VERSION_MANIFEST)" ] && wget $VERSION_MANIFEST -qO "$MDIR/minecraft/versions/$VERSION/$(basename $VERSION_MANIFEST)"
 
-# get jar file for version
-[ ! -f "minecraft/versions/$VERSION/$VERSION.jar" ] && wget "$(jq -r .downloads.client.url minecraft/versions/$VERSION/$VERSION.json)" -qO "minecraft/versions/$VERSION/$VERSION.jar"
+# get jar file for version TODO unwrapped filename
+[ ! -f "$MDIR/minecraft/versions/$VERSION/$VERSION.jar" ] && wget "$(jq -r .downloads.client.url $MDIR/minecraft/versions/$VERSION/$VERSION.json)" -qO "$MDIR/minecraft/versions/$VERSION/$VERSION.jar"
 
-# get version assets
-VERSION_ASSETS="$(jq -r .assetIndex.url minecraft/versions/$VERSION/$VERSION.json)"
-[ ! -f "assets/indexes/$(basename $VERSION_ASSETS)" ] && wget $VERSION_ASSETS -qO "assets/indexes/$(basename $VERSION_ASSETS)"
+# get version assets TODO unwrapped filename
+VERSION_ASSETS="$(jq -r .assetIndex.url $MDIR/minecraft/versions/$VERSION/$VERSION.json)"
+[ ! -f "$MDIR/assets/indexes/$(basename $VERSION_ASSETS)" ] && wget $VERSION_ASSETS -qO "$MDIR/assets/indexes/$(basename $VERSION_ASSETS)"
 
-# download objects
-for OBJ in `jq -r .objects[].hash "assets/indexes/$(basename $VERSION_ASSETS)"`; do
-	mkdir -p "assets/objects/$(echo $OBJ | cut -b 1,2)"
-	[ ! -f "assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ" ] && wget "http://resources.download.minecraft.net/$(echo $OBJ | cut -b 1,2)/$OBJ" -qO "assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ" &
-done
+# download objects TODO unwrapped filename
+if [ "$(jq .map_to_resources $MDIR/assets/indexes/$(basename $VERSION_ASSETS))" = true -o "$(jq .virtual $MDIR/assets/indexes/$(basename $VERSION_ASSETS))" = true ]; then
+	rsrc=1
+	[ "$(jq .virtual $MDIR/assets/indexes/$(basename $VERSION_ASSETS))" = true ] && VIRTP=virtual/
+	OLDIFS="$IFS"
+	IFS=$'\n'
+	for OBJ in `jq -r '.objects|to_entries[]|{"value":.value.hash,"key":.key}' "$MDIR/assets/indexes/$(basename $VERSION_ASSETS)"|tr -d '\n'|xargs|sed 's/[}]/\n/g'|sed 's/^.*value: //g;s/, key://g'`; do
+		echo $OBJ
+		OBJP="`echo $OBJ | sed 's/^[^ ]* //'`"
+		OBJH="`echo $OBJ | sed 's/ .*//'`"
+		eval mkdir -p '$(dirname "$MDIR/resources/$VIRTP$OBJP")'
+		echo wget "https://resources.download.minecraft.net/$(echo $OBJH | cut -b 1,2)/$OBJH" -qO "$MDIR/resources/$VIRTP$OBJP"
+		[ ! -f "$MDIR/resources/$VIRTP$OBJP" ] && wget "https://resources.download.minecraft.net/$(echo $OBJH | cut -b 1,2)/$OBJH" -qO "$MDIR/resources/$VIRTP$OBJP"
+	done
+	IFS="$OLDIFS"
+else
+	for OBJ in `jq -r .objects[].hash "$MDIR/assets/indexes/$(basename $VERSION_ASSETS)"`; do
+		mkdir -p "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)"
+		[ ! -f "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ" ] && echo wget "https://resources.download.minecraft.net/$(echo $OBJ | cut -b 1,2)/$OBJ" && wget "https://resources.download.minecraft.net/$(echo $OBJ | cut -b 1,2)/$OBJ" -qO "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ"
+	done
+fi
+
+echo object download complete
 
 # get non-native libs
-for LIBINDEX in `seq 0 $(($(jq '.libraries|length' minecraft/versions/$VERSION/$VERSION.json)-1))`; do
-	LIBPATH=libs/`jq -r ".libraries[$LIBINDEX].downloads.artifact.path" minecraft/versions/$VERSION/$VERSION.json`
-	LIBURL=`jq -r ".libraries[$LIBINDEX].downloads.artifact.url" minecraft/versions/$VERSION/$VERSION.json`
+for LIBINDEX in `seq 0 $(($(jq '.libraries|length' "$MDIR/minecraft/versions/$VERSION/$VERSION.json")-1))`; do
+	echo lib $LIBINDEX
+	LIBPATH="$MDIR/libs/$VERSION/"`jq -r ".libraries[$LIBINDEX].downloads.artifact.path" "$MDIR/minecraft/versions/$VERSION/$VERSION.json"`
+	LIBURL=`jq -r ".libraries[$LIBINDEX].downloads.artifact.url" "$MDIR/minecraft/versions/$VERSION/$VERSION.json"`
 	mkdir -p "$(dirname $LIBPATH)"
 	[ ! -f "$LIBPATH" ] && echo $LIBURL '=>' "$LIBPATH" && wget $LIBURL -qO "$LIBPATH"
+	QNATIVE=`jq -r .libraries[$LIBINDEX].downloads.classifiers.'"natives-linux"' "$MDIR/minecraft/versions/$VERSION/$VERSION.json"`
+	# TODO create natives for game
+	[ ! "$QNATIVE" = "null" ] &&
+		echo HAS NATIVE &&
+		LIBPATH="$MDIR/libs/$VERSION/"`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".path "$MDIR/minecraft/versions/$VERSION/$VERSION.json"` &&
+		LIBURL=`jq -r .libraries[$LIBINDEX].downloads.classifiers.'"natives-linux"'.url "$MDIR/minecraft/versions/$VERSION/$VERSION.json"` &&
+		mkdir -p "$(dirname $LIBPATH)" &&
+		echo $LIBURL '=>' "$LIBPATH" &&
+		[ ! -f "$LIBPATH" ] && wget $LIBURL -qO "$LIBPATH" &&
+		unzip -o "$LIBPATH" -d $CACHE/natives/$VERSION
 done
 
 # all the libs in the classpath, minus the version jar
 # find /home/NAME/.minecraft/libraries/ | grep jar | sed 's/^\/home\/NAME\/.minecraft\/libraries\///g' | grep -v natives | wc -l
+
+natives_directory=$CACHE/natives/$VERSION
+mkdir -p $natives_directory
+classpath=`find "$MDIR/libs/$VERSION" | grep -v "natives-" | grep -E '.jar$' | xargs | sed 's/ /:/g'`:"$MDIR/minecraft/versions/$VERSION/$VERSION.jar"
+version_name=$VERSION
+assets_root="$MDIR/assets"
+game_assets="$MDIR/assets"
+[ "$rsrc" = 1 ] && game_assets="$MDIR/resources/$VIRTP"
+#game_assets="$assets_root/virtual/pre-1.6" ???
+assets_index_name=`jq -r .assetIndex.id "$MDIR/minecraft/versions/$VERSION/$VERSION.json"`
+version_type=`jq -r .type "$MDIR/minecraft/versions/$VERSION/$VERSION.json"`
+
+# TODO natives
+mkdir -p $CACHE/natives/$VERSION $game_directory
+for i in `find "$MDIR/libs/$VERSION" | grep natives-$PLAT`; do unzip -o $i -d $CACHE/natives/$VERSION; done
+
+jvm="-Xss1M -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M $jvm "`jq -r .arguments.jvm "$MDIR/minecraft/versions/$VERSION/$VERSION.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
+
+# TODO determine correct java version for old release versions
+JAVAV=$JAVA_LATEST
+
+setleg() {
+	JAVAV=$JAVA8
+	#legacygame="--tweakClass net.minecraft.launchwrapper.AlphaVanillaTweaker --gameDir ${game_directory} --assetsDir ${assets_root}"
+	jvm="-Djava.library.path=${natives_directory} -cp $classpath $jvm"
+}
+
+[ "$version_type" = "old_alpha" -o "$version_type" = "old_beta" -o "$(echo $VERSION | sed 's/^[^\.]*\.//;s/\.[^\.]*$//')" -lt '13' ] && setleg
+[ $? = 2 ] && echo $VERSION | grep -v w && setleg
+
+dbrun() {
+	echo $@
+	$@
+}
+
+cd $MDIR
+eval dbrun $JAVAV \
+$jvm \
+`jq -r .mainClass "$MDIR/minecraft/versions/$VERSION/$VERSION.json" --indent 1` \
+`jq -r .minecraftArguments "$MDIR/minecraft/versions/$VERSION/$VERSION.json" --indent 1 | sed 's/,$//' | xargs | sed "s/null//g"` \
+`jq -r .arguments.game "$MDIR/minecraft/versions/$VERSION/$VERSION.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs` \
+$legacygame
