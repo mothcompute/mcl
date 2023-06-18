@@ -33,7 +33,8 @@ auth_access_token=$(jq -r '.tok.mc' "$MDIR/account$2")
 auth_session="token:$auth_access_token:$auth_uuid"
 clientid=$(dd if=/dev/random bs=48 count=1 status=none|base64)
 
-mkdir -p "$CACHE" "$MDIR/libs" "$MDIR/assets" "$MDIR/assets/indexes" "$MDIR/assets/objects" "$MDIR/minecraft" "$CACHE/natives" "$MDIR/profile"
+mkdir -p "$CACHE" "$MDIR/libs" "$MDIR/assets" "$MDIR/assets/indexes" "$MDIR/assets/objects" "$MDIR/versions" "$CACHE/natives" "$MDIR/profile"
+[ ! -f "$MDIR/launcher_profiles.json" ] && echo '{"profiles":{}}' > "$MDIR/launcher_profiles.json"
 
 [ ! -z "$1" -a ! -f "$MDIR/profile/$1" ] && echo -ne "# type 'snapshot', 'release', or a version number. get a list with:\n# curl https://launchermeta.mojang.com/mc/game/version_manifest.json | jq -r '.versions[].id' | less\nVERSION=snapshot\nJAVA8=/usr/lib/jvm/java-8-openjdk/bin/java\nJAVA_LATEST=/bin/java\ngame_directory=~/mclinstance\n# additional jvm arguments\njvm="> "$MDIR/profile/$1" && $EDITOR "$MDIR/profile/$1"
 
@@ -56,17 +57,22 @@ mkdir -p "$game_directory"
 echo ver $VERSION
 
 # create directory structure for version if missing
-mkdir -p $MDIR/minecraft/versions/$VERSION
+mkdir -p $MDIR/versions/$VERSION
 
 # get json file for version
 VERSION_MANIFEST=$(jq ".versions[] | select(.id==\"$VERSION\")" $CACHE/version_manifest.json | jq -r .url)
-[ ! -f "$MDIR/minecraft/versions/$VERSION/$(basename $VERSION_MANIFEST)" ] && wget $VERSION_MANIFEST -qO "$MDIR/minecraft/versions/$VERSION/$(basename $VERSION_MANIFEST)"
+[ ! -z "$VERSION_MANIFEST" ] && [ ! -f "$MDIR/versions/$VERSION/$(basename $VERSION_MANIFEST)" ] && wget $VERSION_MANIFEST -qO "$MDIR/versions/$VERSION/$(basename $VERSION_MANIFEST)"
+
+VERJSON="$MDIR/versions/$VERSION/$VERSION.json"
+IVER=$(jq -r .inheritsFrom "$VERJSON")
+[ ! -z "$IVER" ] && spruce merge "$MDIR/versions/$IVER/$IVER.json" "$VERJSON" | spruce json > "$CACHE/$VERSION.json" && export VERJSON="$CACHE/$VERSION.json"
+echo json $VERJSON
 
 # get jar file for version TODO unwrapped filename
-[ ! -f "$MDIR/minecraft/versions/$VERSION/$VERSION.jar" ] && wget "$(jq -r .downloads.client.url $MDIR/minecraft/versions/$VERSION/$VERSION.json)" -qO "$MDIR/minecraft/versions/$VERSION/$VERSION.jar"
+[ ! -f "$MDIR/versions/$VERSION/$VERSION.jar" ] && wget "$(jq -r .downloads.client.url $VERJSON)" -qO "$MDIR/versions/$VERSION/$VERSION.jar"
 
 # get version assets TODO unwrapped filename
-VERSION_ASSETS="$(jq -r .assetIndex.url $MDIR/minecraft/versions/$VERSION/$VERSION.json)"
+VERSION_ASSETS="$(jq -r .assetIndex.url $VERJSON)"
 [ ! -f "$MDIR/assets/indexes/$(basename $VERSION_ASSETS)" ] && wget $VERSION_ASSETS -qO "$MDIR/assets/indexes/$(basename $VERSION_ASSETS)"
 
 # download objects TODO unwrapped filename
@@ -93,19 +99,23 @@ fi
 
 echo object download complete
 
+export CLASSPT="$MDIR/libs/$VERSION"
+
 # get non-native libs
-for LIBINDEX in `seq 0 $(($(jq '.libraries|length' "$MDIR/minecraft/versions/$VERSION/$VERSION.json")-1))`; do
+for LIBINDEX in `seq 0 $(($(jq '.libraries|length' "$VERJSON")-1))`; do
 	echo lib $LIBINDEX
-	LIBPATH="$MDIR/libs/$VERSION/"`jq -r ".libraries[$LIBINDEX].downloads.artifact.path" "$MDIR/minecraft/versions/$VERSION/$VERSION.json"`
-	LIBURL=`jq -r ".libraries[$LIBINDEX].downloads.artifact.url" "$MDIR/minecraft/versions/$VERSION/$VERSION.json"`
+	LIBPATH="$MDIR/libs/$VERSION/"`jq -r ".libraries[$LIBINDEX].downloads.artifact.path" "$VERJSON"`
+	LIBURL=`jq -r ".libraries[$LIBINDEX].downloads.artifact.url" "$VERJSON"`
+	[ "$LIBURL" = null ] && export CLASSPT="$CLASSPT $MDIR/libraries/$(jq -r .libraries\[$LIBINDEX\].name $VERJSON | sed 's/:/\//g')" && echo $CLASSPT
+
 	mkdir -p "$(dirname $LIBPATH)"
 	[ ! -f "$LIBPATH" ] && echo $LIBURL '=>' "$LIBPATH" && wget $LIBURL -qO "$LIBPATH"
-	QNATIVE=`jq -r .libraries[$LIBINDEX].downloads.classifiers.'"natives-linux"' "$MDIR/minecraft/versions/$VERSION/$VERSION.json"`
+	QNATIVE=`jq -r .libraries[$LIBINDEX].downloads.classifiers.'"natives-linux"' "$VERJSON"`
 	# TODO create natives for game
 	[ ! "$QNATIVE" = "null" ] &&
 		echo HAS NATIVE &&
-		LIBPATH="$MDIR/libs/$VERSION/"`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".path "$MDIR/minecraft/versions/$VERSION/$VERSION.json"` &&
-		LIBURL=`jq -r .libraries[$LIBINDEX].downloads.classifiers.'"natives-linux"'.url "$MDIR/minecraft/versions/$VERSION/$VERSION.json"` &&
+		LIBPATH="$MDIR/libs/$VERSION/"`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".path "$VERJSON"` &&
+		LIBURL=`jq -r .libraries[$LIBINDEX].downloads.classifiers.'"natives-linux"'.url "$VERJSON"` &&
 		mkdir -p "$(dirname $LIBPATH)" &&
 		echo $LIBURL '=>' "$LIBPATH" &&
 		[ ! -f "$LIBPATH" ] && wget $LIBURL -qO "$LIBPATH" &&
@@ -117,42 +127,46 @@ done
 
 natives_directory=$CACHE/natives/$VERSION
 mkdir -p $natives_directory
-classpath=`find "$MDIR/libs/$VERSION" | grep -v "natives-" | grep -E '.jar$' | xargs | sed 's/ /:/g'`:"$MDIR/minecraft/versions/$VERSION/$VERSION.jar"
+classpath=`find $CLASSPT | grep -v "natives-" | grep -E '.jar$' | xargs | sed 's/ /:/g'`:"$MDIR/versions/$VERSION/$VERSION.jar"
 version_name=$VERSION
 assets_root="$MDIR/assets"
 game_assets="$MDIR/assets"
 [ "$rsrc" = 1 ] && game_assets="$MDIR/resources/$VIRTP"
 #game_assets="$assets_root/virtual/pre-1.6" ???
-assets_index_name=`jq -r .assetIndex.id "$MDIR/minecraft/versions/$VERSION/$VERSION.json"`
-version_type=`jq -r .type "$MDIR/minecraft/versions/$VERSION/$VERSION.json"`
+assets_index_name=`jq -r .assetIndex.id "$VERJSON"`
+version_type=`jq -r .type "$VERJSON"`
 
 # TODO natives
 mkdir -p $CACHE/natives/$VERSION $game_directory
 for i in `find "$MDIR/libs/$VERSION" | grep natives-$PLAT`; do unzip -o $i -d $CACHE/natives/$VERSION; done
 
-jvm="-Xss1M -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M $jvm "`jq -r .arguments.jvm "$MDIR/minecraft/versions/$VERSION/$VERSION.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
+jvm="-Xss1M -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M $jvm "`jq -r .arguments.jvm "$VERJSON" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
 
 # TODO determine correct java version for old release versions
 JAVAV=$JAVA_LATEST
 
 setleg() {
+	echo legacy version detected
 	JAVAV=$JAVA8
 	#legacygame="--tweakClass net.minecraft.launchwrapper.AlphaVanillaTweaker --gameDir ${game_directory} --assetsDir ${assets_root}"
 	jvm="-Djava.library.path=${natives_directory} -cp $classpath $jvm"
 }
 
 [ "$version_type" = "old_alpha" -o "$version_type" = "old_beta" -o "$(echo $VERSION | sed 's/^[^\.]*\.//;s/\.[^\.]*$//')" -lt '13' ] && setleg
-[ $? = 2 ] && echo $VERSION | grep -v w && setleg
+#TODO optifine
+#[ $? = 2 ] && echo $VERSION | grep -v w && setleg
 
 dbrun() {
-	echo $@
+	echo $@ | sed 's/:/\n/g'
 	$@
 }
+
+GAMEARGS=`jq -r .arguments.game "$MDIR/versions/$VERSION/$VERSION.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
+[ ! -z "$IVER" ] && GAMEARGS="$GAMEARGS "`jq -r .arguments.game "$MDIR/versions/$IVER/$IVER.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
 
 cd $MDIR
 eval dbrun $JAVAV \
 $jvm \
-`jq -r .mainClass "$MDIR/minecraft/versions/$VERSION/$VERSION.json" --indent 1` \
-`jq -r .minecraftArguments "$MDIR/minecraft/versions/$VERSION/$VERSION.json" --indent 1 | sed 's/,$//' | xargs | sed "s/null//g"` \
-`jq -r .arguments.game "$MDIR/minecraft/versions/$VERSION/$VERSION.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs` \
-$legacygame
+`jq -r .mainClass "$VERJSON" --indent 1` \
+`jq -r .minecraftArguments "$VERJSON" --indent 1 | sed 's/,$//' | xargs | sed "s/null//g"` \
+$GAMEARGS $legacygame
