@@ -38,6 +38,9 @@ mkdir -p "$CACHE" "$MDIR/libs" "$MDIR/assets" "$MDIR/assets/indexes" "$MDIR/asse
 
 [ ! -z "$1" -a ! -f "$MDIR/profile/$1" ] && echo -ne "# type 'snapshot', 'release', or a version number. get a list with:\n# curl https://launchermeta.mojang.com/mc/game/version_manifest.json | jq -r '.versions[].id' | less\nVERSION=snapshot\nJAVA8=/usr/lib/jvm/java-8-openjdk/bin/java\nJAVA_LATEST=/bin/java\ngame_directory=~/mclinstance\n# additional jvm arguments\njvm="> "$MDIR/profile/$1" && $EDITOR "$MDIR/profile/$1"
 
+MANIFEST='https://launchermeta.mojang.com/mc/game/version_manifest.json'
+[ "$(uname -sm)" = "Linux aarch64" ] && MANIFEST='https://raw.githubusercontent.com/theofficialgman/piston-meta-arm64/main/mc/game/version_manifest.json'
+
 echo fetching version manifest...
 wget https://launchermeta.mojang.com/mc/game/version_manifest.json -qO $CACHE/version_manifest.json
 
