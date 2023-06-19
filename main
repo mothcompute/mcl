@@ -99,35 +99,49 @@ fi
 
 echo object download complete
 
-export CLASSPT="$MDIR/libs/$VERSION"
+export classpath="$MDIR/versions/$VERSION/$VERSION.jar"
 
 # get non-native libs
-for LIBINDEX in `seq 0 $(($(jq '.libraries|length' "$VERJSON")-1))`; do
+fetchlib() {
+LIBJSON="$1"
+for LIBINDEX in `seq 0 $(($(jq '.libraries|length' "$LIBJSON")-1))`; do
 	echo lib $LIBINDEX
-	LIBPATH="$MDIR/libs/$VERSION/"`jq -r ".libraries[$LIBINDEX].downloads.artifact.path" "$VERJSON"`
-	LIBURL=`jq -r ".libraries[$LIBINDEX].downloads.artifact.url" "$VERJSON"`
-	[ "$LIBURL" = null ] && export CLASSPT="$CLASSPT $MDIR/libraries/$(jq -r .libraries\[$LIBINDEX\].name $VERJSON | sed 's/:/\//g')" && echo $CLASSPT
+	LIBPATH="$MDIR/libraries/"`jq -r ".libraries[$LIBINDEX].downloads.artifact.path" "$LIBJSON"`
+	LIBURL=`jq -r ".libraries[$LIBINDEX].downloads.artifact.url" "$LIBJSON"`
+	LIBNAME=`jq -r ".libraries[$LIBINDEX].name" "$LIBJSON"`
 
 	mkdir -p "$(dirname $LIBPATH)"
 	[ ! -f "$LIBPATH" ] && echo $LIBURL '=>' "$LIBPATH" && wget $LIBURL -qO "$LIBPATH"
-	QNATIVE=`jq -r .libraries[$LIBINDEX].downloads.classifiers.'"natives-linux"' "$VERJSON"`
+	QNATIVE=`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"" "$LIBJSON"`
 	# TODO create natives for game
 	[ ! "$QNATIVE" = "null" ] &&
 		echo HAS NATIVE &&
-		LIBPATH="$MDIR/libs/$VERSION/"`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".path "$VERJSON"` &&
-		LIBURL=`jq -r .libraries[$LIBINDEX].downloads.classifiers.'"natives-linux"'.url "$VERJSON"` &&
+		LIBPATH="$MDIR/libs/$VERSION/"`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".path "$LIBJSON"` &&
+		LIBURL=`jq -r .libraries[$LIBINDEX].downloads.classifiers.'"natives-linux"'.url "$LIBJSON"` &&
 		mkdir -p "$(dirname $LIBPATH)" &&
 		echo $LIBURL '=>' "$LIBPATH" &&
 		[ ! -f "$LIBPATH" ] && wget $LIBURL -qO "$LIBPATH" &&
 		unzip -o "$LIBPATH" -d $CACHE/natives/$VERSION
+
+	if [ ! "$LIBURL" = null ]; then
+		classpath="$classpath:$LIBPATH"
+	else
+		classpath="$classpath:$(find `echo $MDIR/libraries/$LIBNAME | sed 's/:/\//g'` | grep -E '\.jar$')"
+	fi
 done
+}
+
+[ ! -z "$IVER" ] && fetchlib "$MDIR/versions/$IVER/$IVER.json"
+fetchlib "$MDIR/versions/$VERSION/$VERSION.json"
 
 # all the libs in the classpath, minus the version jar
 # find /home/NAME/.minecraft/libraries/ | grep jar | sed 's/^\/home\/NAME\/.minecraft\/libraries\///g' | grep -v natives | wc -l
 
+library_directory="$MDIR/libraries"
+classpath_separator=":"
 natives_directory=$CACHE/natives/$VERSION
 mkdir -p $natives_directory
-classpath=`find $CLASSPT | grep -v "natives-" | grep -E '.jar$' | xargs | sed 's/ /:/g'`:"$MDIR/versions/$VERSION/$VERSION.jar"
+#classpath=`find $CLASSPT | grep -v "natives-" | grep -E '.jar$' | xargs | sed 's/ /:/g'`:"$MDIR/versions/$VERSION/$VERSION.jar"
 version_name=$VERSION
 assets_root="$MDIR/assets"
 game_assets="$MDIR/assets"
@@ -140,7 +154,8 @@ version_type=`jq -r .type "$VERJSON"`
 mkdir -p $CACHE/natives/$VERSION $game_directory
 for i in `find "$MDIR/libs/$VERSION" | grep natives-$PLAT`; do unzip -o $i -d $CACHE/natives/$VERSION; done
 
-jvm="-Xss1M -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M $jvm "`jq -r .arguments.jvm "$VERJSON" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
+jvm="-Xss1M -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M $jvm "`jq -r .arguments.jvm "$MDIR/versions/$VERSION/$VERSION.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
+[ ! -z "$IVER" ] && jvm="$jvm "`jq -r .arguments.jvm "$MDIR/versions/$IVER/$IVER.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
 
 # TODO determine correct java version for old release versions
 JAVAV=$JAVA_LATEST
