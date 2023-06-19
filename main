@@ -1,4 +1,4 @@
-# assume EDITOR is set
+[ -z "$EDITOR" ] && echo '$EDITOR not set' && exit
 BROWSER=firefox
 
 # im not multimc who cares if you dont rename this
@@ -42,7 +42,7 @@ MANIFEST='https://launchermeta.mojang.com/mc/game/version_manifest.json'
 [ "$(uname -sm)" = "Linux aarch64" ] && MANIFEST='https://raw.githubusercontent.com/theofficialgman/piston-meta-arm64/main/mc/game/version_manifest.json'
 
 echo fetching version manifest...
-wget https://launchermeta.mojang.com/mc/game/version_manifest.json -qO $CACHE/version_manifest.json
+wget "$MANIFEST" -qO $CACHE/version_manifest.json
 
 CHANNEL=snapshot
 JAVA8=/usr/lib/jvm/java-8-openjdk/bin/java
@@ -68,7 +68,7 @@ VERSION_MANIFEST=$(jq ".versions[] | select(.id==\"$VERSION\")" $CACHE/version_m
 
 VERJSON="$MDIR/versions/$VERSION/$VERSION.json"
 IVER=$(jq -r .inheritsFrom "$VERJSON")
-[ ! -z "$IVER" ] && spruce merge "$MDIR/versions/$IVER/$IVER.json" "$VERJSON" | spruce json > "$CACHE/$VERSION.json" && export VERJSON="$CACHE/$VERSION.json"
+[ ! "$IVER" = null ] && spruce merge "$MDIR/versions/$IVER/$IVER.json" "$VERJSON" | spruce json > "$CACHE/$VERSION.json" && export VERJSON="$CACHE/$VERSION.json"
 echo json $VERJSON
 
 # get jar file for version TODO unwrapped filename
