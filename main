@@ -1,11 +1,16 @@
 [ -z "$EDITOR" ] && echo '$EDITOR not set' && exit
 BROWSER=firefox
 
-# im not multimc who cares if you dont rename this
+# rename this if youre making a fork. or dont. im not multimc
 PNAME=mcl
 MDIR=~/.$PNAME
 CACHE=/tmp/$PNAME\cache
-PLAT=linux
+
+
+PLAT=''
+[ `uname -s` = Linux ] && PLAT=linux
+[ `uname -s` = Darwin ] && PLAT=osx
+#TODO other unixlikes, figure out m1 support
 
 login() {
 	$1 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=ed8c593c-4c7f-4484-8dc4-d2ce60bf62a4&response_type=code&response_mode=query&scope=XboxLive.signin&redirect_uri=https%3A%2F%2Fmothcompute.lilylenora.net%2Fmcl_auth.php'
@@ -21,6 +26,8 @@ login() {
 [ $(date -d "$(jq -r .exp.mc "$MDIR/account$2")" +%s) -le $(date +%s) ] && if [ $(date -d "$(jq -r .exp.xb "$MDIR/account$2")" +%s) -le $(date +%s) ]; then
 	login "$BROWSER" "$2"
 	else
+		jq -r .tok.xb "$MDIR/account$2"
+		[ $? = 0 ] && login "$BROWSER" "$2"
 		curl 'https://mothcompute.lilylenora.net/mcl_auth.php?xb='$(jq -r .tok.xb "$MDIR/account$2")'&u='$(jq -r .xb_usr "$MDIR/account$2")'&e='$(jq -r .exp.xb "$MDIR/account$2") > "$MDIR/swp.account$2"
 		mv "$MDIR/swp.account$2" "$MDIR/account$2"
 fi
@@ -50,7 +57,7 @@ JAVA_LATEST=/bin/java
 game_directory=~/mclinstance
 VERSION="$(jq -r .latest.$CHANNEL $CACHE/version_manifest.json)"
 jvm=""
-VIRTP=""
+export VIRTP=""
 
 [ ! -z "$1" ] && . "$MDIR/profile/$1"
 mkdir -p "$game_directory"
@@ -59,10 +66,8 @@ mkdir -p "$game_directory"
 
 echo ver $VERSION
 
-# create directory structure for version if missing
 mkdir -p $MDIR/versions/$VERSION
 
-# get json file for version
 VERSION_MANIFEST=$(jq ".versions[] | select(.id==\"$VERSION\")" $CACHE/version_manifest.json | jq -r .url)
 [ ! -z "$VERSION_MANIFEST" ] && [ ! -f "$MDIR/versions/$VERSION/$(basename $VERSION_MANIFEST)" ] && wget $VERSION_MANIFEST -qO "$MDIR/versions/$VERSION/$(basename $VERSION_MANIFEST)"
 
@@ -78,9 +83,11 @@ echo json $VERJSON
 VERSION_ASSETS="$(jq -r .assetIndex.url $VERJSON)"
 [ ! -f "$MDIR/assets/indexes/$(basename $VERSION_ASSETS)" ] && wget $VERSION_ASSETS -qO "$MDIR/assets/indexes/$(basename $VERSION_ASSETS)"
 
+export rsrc=''
+
 # download objects TODO unwrapped filename
 if [ "$(jq .map_to_resources $MDIR/assets/indexes/$(basename $VERSION_ASSETS))" = true -o "$(jq .virtual $MDIR/assets/indexes/$(basename $VERSION_ASSETS))" = true ]; then
-	rsrc=1
+	export rsrc=1
 	[ "$(jq .virtual $MDIR/assets/indexes/$(basename $VERSION_ASSETS))" = true ] && VIRTP=virtual/
 	OLDIFS="$IFS"
 	IFS=$'\n'
@@ -104,83 +111,107 @@ echo object download complete
 
 export classpath="$MDIR/versions/$VERSION/$VERSION.jar"
 
-# get non-native libs
+shortdl() {
+	echo shortdl \"$1\" \"$2\" \"$3\"
+
+	CPATH="`echo $1 | sed 's/\./\//g'`/$2/$3/$2-$3"
+	FCPATH="$MDIR/libraries/$CPATH.jar"
+	mkdir -p "$(dirname $FCPATH)"
+
+	[ ! -f "$FCPATH" ] && wget "https://libraries.minecraft.net/$CPATH.jar" -O "$FCPATH"
+	classpath="$classpath:$FCPATH"
+	[ ! -z "$4" ] && eval wget "https://libraries.minecraft.net/$CPATH-$4.jar" -O "$CPATH-$4.jar" && unzip "$CPATH-$4.jar" -d "$CACHE/natives/$VERSION"
+}
+
 fetchlib() {
 LIBJSON="$1"
 for LIBINDEX in `seq 0 $(($(jq '.libraries|length' "$LIBJSON")-1))`; do
-	echo lib $LIBINDEX
+	echo -n "lib $LIBINDEX "
 	LIBPATH="$MDIR/libraries/"`jq -r ".libraries[$LIBINDEX].downloads.artifact.path" "$LIBJSON"`
 	LIBURL=`jq -r ".libraries[$LIBINDEX].downloads.artifact.url" "$LIBJSON"`
 	LIBNAME=`jq -r ".libraries[$LIBINDEX].name" "$LIBJSON"`
 
+	ALLOW=1
+	PALLOW=1
+
+	if [ ! "`jq -r \".libraries[$LIBINDEX].rules\" \"$LIBJSON\"`" = null ]; then
+	ALLOW=0
+	for RULEINDEX in `seq 0 $(($(jq '.libraries['$LIBINDEX'].rules|length' "$LIBJSON")-1))`; do
+		action=`jq -r ".libraries[$LIBINDEX].rules[$RULEINDEX].action" "$LIBJSON"`
+		os=`jq -r ".libraries[$LIBINDEX].rules[$RULEINDEX].os.name" "$LIBJSON"`
+		[ "$os" = $PLAT -a "$action" = disallow ] && ALLOW=0 && PALLOW=0
+		[ "$os" = $PLAT -a "$action" = allow ] && ALLOW=1
+		[ "$os" = null -a "$action" = allow -a "$PALLOW" = 1 ] && ALLOW=1
+	done
+	fi
+
+	echo "$ALLOW $LIBNAME"
+	if [ $ALLOW = 1 ]; then
 	mkdir -p "$(dirname $LIBPATH)"
-	[ ! -f "$LIBPATH" ] && echo $LIBURL '=>' "$LIBPATH" && wget $LIBURL -qO "$LIBPATH"
+	[ ! -f "$LIBPATH" ] && [ ! "$LIBURL" = null ] && echo $LIBURL '=>' "$LIBPATH" && wget $LIBURL -qO "$LIBPATH"
 	QNATIVE=`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"" "$LIBJSON"`
-	# TODO create natives for game
+	# TODO linux centric
 	[ ! "$QNATIVE" = "null" ] &&
 		echo HAS NATIVE &&
-		LIBPATH="$MDIR/libs/$VERSION/"`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".path "$LIBJSON"` &&
+		LIBPATH="$MDIR/libraries/"`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".path "$LIBJSON"` &&
 		LIBURL=`jq -r .libraries[$LIBINDEX].downloads.classifiers.'"natives-linux"'.url "$LIBJSON"` &&
 		mkdir -p "$(dirname $LIBPATH)" &&
 		echo $LIBURL '=>' "$LIBPATH" &&
 		[ ! -f "$LIBPATH" ] && wget $LIBURL -qO "$LIBPATH" &&
-		unzip -o "$LIBPATH" -d $CACHE/natives/$VERSION
+		unzip -o "$LIBPATH" -d "$CACHE/natives/$VERSION"
 
 	if [ ! "$LIBURL" = null ]; then
 		classpath="$classpath:$LIBPATH"
 	else
-		classpath="$classpath:$(find `echo $MDIR/libraries/$LIBNAME | sed 's/:/\//g'` | grep -E '\.jar$')"
+		QNATIVE=''
+		[ ! "`jq -r \".libraries[$LIBINDEX].natives\" \"$LIBJSON\"`" = null ] && QNATIVE=`jq -r ".libraries[$LIBINDEX].natives.$PLAT" "$LIBJSON"`
+		shortdl `echo $LIBNAME | sed 's/:/ /g'` $QNATIVE
+	fi
 	fi
 done
 }
 
-[ ! -z "$IVER" ] && fetchlib "$MDIR/versions/$IVER/$IVER.json"
+[ ! "$IVER" = null ] && fetchlib "$MDIR/versions/$IVER/$IVER.json"
 fetchlib "$MDIR/versions/$VERSION/$VERSION.json"
-
-# all the libs in the classpath, minus the version jar
-# find /home/NAME/.minecraft/libraries/ | grep jar | sed 's/^\/home\/NAME\/.minecraft\/libraries\///g' | grep -v natives | wc -l
 
 library_directory="$MDIR/libraries"
 classpath_separator=":"
 natives_directory=$CACHE/natives/$VERSION
 mkdir -p $natives_directory
-#classpath=`find $CLASSPT | grep -v "natives-" | grep -E '.jar$' | xargs | sed 's/ /:/g'`:"$MDIR/versions/$VERSION/$VERSION.jar"
 version_name=$VERSION
 assets_root="$MDIR/assets"
 game_assets="$MDIR/assets"
 [ "$rsrc" = 1 ] && game_assets="$MDIR/resources/$VIRTP"
+[ $(date -d $(jq -r ".releaseTime" $VERJSON) +%s) -lt 1382454245 ] && game_assets="$MDIR/resources/$VIRTP"
 #game_assets="$assets_root/virtual/pre-1.6" ???
 assets_index_name=`jq -r .assetIndex.id "$VERJSON"`
 version_type=`jq -r .type "$VERJSON"`
 
-# TODO natives
 mkdir -p $CACHE/natives/$VERSION $game_directory
 for i in `find "$MDIR/libs/$VERSION" | grep natives-$PLAT`; do unzip -o $i -d $CACHE/natives/$VERSION; done
 
 jvm="-Xss1M -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M $jvm "`jq -r .arguments.jvm "$MDIR/versions/$VERSION/$VERSION.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
-[ ! -z "$IVER" ] && jvm="$jvm "`jq -r .arguments.jvm "$MDIR/versions/$IVER/$IVER.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
+[ ! "$IVER" = null ] && jvm="$jvm "`jq -r .arguments.jvm "$MDIR/versions/$IVER/$IVER.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
 
 # TODO determine correct java version for old release versions
 JAVAV=$JAVA_LATEST
 
+GAMEARGS=`jq -r .arguments.game "$MDIR/versions/$VERSION/$VERSION.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
+[ ! "$IVER" = null ] && GAMEARGS="$GAMEARGS "`jq -r .arguments.game "$MDIR/versions/$IVER/$IVER.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
+
 setleg() {
 	echo legacy version detected
 	JAVAV=$JAVA8
-	#legacygame="--tweakClass net.minecraft.launchwrapper.AlphaVanillaTweaker --gameDir ${game_directory} --assetsDir ${assets_root}"
-	jvm="-Djava.library.path=${natives_directory} -cp $classpath $jvm"
+	jvm="-Djava.library.path=${natives_directory}:$ -cp $classpath $jvm"
+	GAMEARGS=''
 }
 
-[ "$version_type" = "old_alpha" -o "$version_type" = "old_beta" -o "$(echo $VERSION | sed 's/^[^\.]*\.//;s/\.[^\.]*$//')" -lt '13' ] && setleg
-#TODO optifine
-#[ $? = 2 ] && echo $VERSION | grep -v w && setleg
+[ $(date -d $(jq -r ".releaseTime" $VERJSON) +%s) -lt 1505723986 ] && setleg
 
 dbrun() {
 	echo $@ | sed 's/:/\n/g'
 	$@
 }
-
-GAMEARGS=`jq -r .arguments.game "$MDIR/versions/$VERSION/$VERSION.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
-[ ! -z "$IVER" ] && GAMEARGS="$GAMEARGS "`jq -r .arguments.game "$MDIR/versions/$IVER/$IVER.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
 
 cd $MDIR
 eval dbrun $JAVAV \
