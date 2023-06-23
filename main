@@ -116,11 +116,13 @@ shortdl() {
 
 	CPATH="`echo $1 | sed 's/\./\//g'`/$2/$3/$2-$3"
 	FCPATH="$MDIR/libraries/$CPATH.jar"
+	NCPATH="$MDIR/libraries/$CPATH-$4.jar"
 	mkdir -p "$(dirname $FCPATH)"
 
 	[ ! -f "$FCPATH" ] && wget "https://libraries.minecraft.net/$CPATH.jar" -O "$FCPATH"
 	classpath="$classpath:$FCPATH"
-	[ ! -z "$4" ] && eval wget "https://libraries.minecraft.net/$CPATH-$4.jar" -O "$CPATH-$4.jar" && unzip "$CPATH-$4.jar" -d "$CACHE/natives/$VERSION"
+	[ ! -z "$4" ] && [ ! "$4" = null ] && eval wget "https://libraries.minecraft.net/$CPATH-$4.jar" -O "$NCPATH-$4.jar" && echo "legacy natives" && unzip -o "$NCPATH-$4.jar" -d "$CACHE/natives/$VERSION" && classpath="$classpath:$NCPATH"
+#for i in `find "$MDIR/libs/$VERSION" | grep natives-$PLAT`; do unzip -o $i -d $CACHE/natives/$VERSION; done
 }
 
 fetchlib() {
@@ -150,15 +152,16 @@ for LIBINDEX in `seq 0 $(($(jq '.libraries|length' "$LIBJSON")-1))`; do
 	mkdir -p "$(dirname $LIBPATH)"
 	[ ! -f "$LIBPATH" ] && [ ! "$LIBURL" = null ] && echo $LIBURL '=>' "$LIBPATH" && wget $LIBURL -qO "$LIBPATH"
 	QNATIVE=`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"" "$LIBJSON"`
-	# TODO linux centric
-	[ ! "$QNATIVE" = "null" ] &&
-		echo HAS NATIVE &&
-		LIBPATH="$MDIR/libraries/"`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".path "$LIBJSON"` &&
-		LIBURL=`jq -r .libraries[$LIBINDEX].downloads.classifiers.'"natives-linux"'.url "$LIBJSON"` &&
-		mkdir -p "$(dirname $LIBPATH)" &&
-		echo $LIBURL '=>' "$LIBPATH" &&
-		[ ! -f "$LIBPATH" ] && wget $LIBURL -qO "$LIBPATH" &&
+
+	if [ ! "$QNATIVE" = "null" ]; then
+		echo HAS NATIVE
+		LIBPATH="$MDIR/libraries/"`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".path "$LIBJSON"`
+		LIBURL=`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".url "$LIBJSON"`
+		mkdir -p "$(dirname $LIBPATH)"
+		echo $LIBURL '=>' "$LIBPATH"
+		[ ! -f "$LIBPATH" ] && wget $LIBURL -qO "$LIBPATH"
 		unzip -o "$LIBPATH" -d "$CACHE/natives/$VERSION"
+	fi
 
 	if [ ! "$LIBURL" = null ]; then
 		classpath="$classpath:$LIBPATH"
@@ -171,13 +174,14 @@ for LIBINDEX in `seq 0 $(($(jq '.libraries|length' "$LIBJSON")-1))`; do
 done
 }
 
+natives_directory="$CACHE/natives/$VERSION"
+mkdir -p "$natives_directory" "$game_directory"
+
 [ ! "$IVER" = null ] && fetchlib "$MDIR/versions/$IVER/$IVER.json"
 fetchlib "$MDIR/versions/$VERSION/$VERSION.json"
 
 library_directory="$MDIR/libraries"
 classpath_separator=":"
-natives_directory=$CACHE/natives/$VERSION
-mkdir -p $natives_directory
 version_name=$VERSION
 assets_root="$MDIR/assets"
 game_assets="$MDIR/assets"
@@ -186,9 +190,8 @@ game_assets="$MDIR/assets"
 #game_assets="$assets_root/virtual/pre-1.6" ???
 assets_index_name=`jq -r .assetIndex.id "$VERJSON"`
 version_type=`jq -r .type "$VERJSON"`
+user_properties='{}'
 
-mkdir -p $CACHE/natives/$VERSION $game_directory
-for i in `find "$MDIR/libs/$VERSION" | grep natives-$PLAT`; do unzip -o $i -d $CACHE/natives/$VERSION; done
 
 jvm="-Xss1M -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M $jvm "`jq -r .arguments.jvm "$MDIR/versions/$VERSION/$VERSION.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
 [ ! "$IVER" = null ] && jvm="$jvm "`jq -r .arguments.jvm "$MDIR/versions/$IVER/$IVER.json" --indent 1 | grep -E '^ "' | sed 's/,$//' | xargs`
