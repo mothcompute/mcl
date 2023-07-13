@@ -1,3 +1,5 @@
+#!/bin/sh
+
 [ -z "$EDITOR" ] && echo '$EDITOR not set' && exit
 BROWSER=firefox
 
@@ -110,7 +112,7 @@ if [ "$(jq .map_to_resources $MDIR/assets/indexes/$(basename $VERSION_ASSETS))" 
 else
 	for OBJ in `jq -r .objects[].hash "$MDIR/assets/indexes/$(basename $VERSION_ASSETS)"`; do
 		mkdir -p "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)"
-		[ ! $(sha1sum "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ" | cut -f 1 -d ' ') = $OBJ ] && dbrun wget -c "https://resources.download.minecraft.net/$(echo $OBJ | cut -b 1,2)/$OBJ" -qO "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ"
+		[ ! $(sha1sum "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ" 2>&1 | cut -f 1 -d ' ') = $OBJ ] && dbrun wget -c "https://resources.download.minecraft.net/$(echo $OBJ | cut -b 1,2)/$OBJ" -qO "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ"
 	done
 fi
 
