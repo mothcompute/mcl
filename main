@@ -12,6 +12,8 @@ PLAT=''
 [ `uname -s` = Darwin ] && PLAT=osx
 #TODO other unixlikes, figure out m1 support
 
+mkdir -p "$MDIR"
+
 login() {
 	$1 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=ed8c593c-4c7f-4484-8dc4-d2ce60bf62a4&response_type=code&response_mode=query&scope=XboxLive.signin&redirect_uri=https%3A%2F%2Fmothcompute.lilylenora.net%2Fmcl_auth.php'
 	echo -n 'opened sign-in link in firefox. paste the output into the file that is about to be opened (press enter to continue):'
@@ -85,6 +87,11 @@ VERSION_ASSETS="$(jq -r .assetIndex.url $VERJSON)"
 
 export rsrc=''
 
+dbrun() {
+	echo $@ | sed 's/:/\n/g'
+	$@
+}
+
 # download objects TODO unwrapped filename
 if [ "$(jq .map_to_resources $MDIR/assets/indexes/$(basename $VERSION_ASSETS))" = true -o "$(jq .virtual $MDIR/assets/indexes/$(basename $VERSION_ASSETS))" = true ]; then
 	export rsrc=1
@@ -103,7 +110,7 @@ if [ "$(jq .map_to_resources $MDIR/assets/indexes/$(basename $VERSION_ASSETS))" 
 else
 	for OBJ in `jq -r .objects[].hash "$MDIR/assets/indexes/$(basename $VERSION_ASSETS)"`; do
 		mkdir -p "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)"
-		[ ! -f "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ" ] && echo wget "https://resources.download.minecraft.net/$(echo $OBJ | cut -b 1,2)/$OBJ" && wget "https://resources.download.minecraft.net/$(echo $OBJ | cut -b 1,2)/$OBJ" -qO "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ"
+		[ ! $(sha1sum "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ" | cut -f 1 -d ' ') = $OBJ ] && dbrun wget -c "https://resources.download.minecraft.net/$(echo $OBJ | cut -b 1,2)/$OBJ" -qO "$MDIR/assets/objects/$(echo $OBJ | cut -b 1,2)/$OBJ"
 	done
 fi
 
@@ -155,8 +162,9 @@ for LIBINDEX in `seq 0 $(($(jq '.libraries|length' "$LIBJSON")-1))`; do
 
 	if [ ! "$QNATIVE" = "null" ]; then
 		echo HAS NATIVE
-		LIBPATH="$MDIR/libraries/"`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".path "$LIBJSON"`
 		LIBURL=`jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".url "$LIBJSON"`
+		LIBPATH="$MDIR/libraries/"$(dirname `jq -r .libraries[$LIBINDEX].downloads.classifiers."\"natives-$PLAT\"".path "$LIBJSON"`)/$(basename "$LIBURL")
+		echo native at $LIBPATH
 		mkdir -p "$(dirname $LIBPATH)"
 		echo $LIBURL '=>' "$LIBPATH"
 		[ ! -f "$LIBPATH" ] && wget $LIBURL -qO "$LIBPATH"
@@ -210,11 +218,6 @@ setleg() {
 }
 
 [ $(date -d $(jq -r ".releaseTime" $VERJSON) +%s) -lt 1505723986 ] && setleg
-
-dbrun() {
-	echo $@ | sed 's/:/\n/g'
-	$@
-}
 
 cd $MDIR
 eval dbrun $JAVAV \
